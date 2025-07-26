@@ -1,0 +1,21 @@
+{
+  "name": "ddg-search-app",
+  "version": "1.0.0",
+  "description": "A simple web app to search DuckDuckGo and display results as JSON.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "duckduckgo",
+    "search",
+    "json"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
