@@ -3,6 +3,29 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { URL } = require('url');
 
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 16_1_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.62",
+  "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0",
+  "Mozilla/5.0 (Linux; Android 13; SM-A536U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (iPad; CPU OS 16_1_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/108.0.5359.112 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36 Vivaldi/5.5.2805.50",
+  "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 15_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.3 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Linux; Android 12; SM-G991U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Mobile Safari/537.36"
+];
+
 class RateLimiter {
   constructor(requestsPerMinute = 30) {
     this.requestsPerMinute = requestsPerMinute;
@@ -40,9 +63,6 @@ class SearchResult {
 class DuckDuckGoSearcher {
   constructor() {
     this.BASE_URL = "https://html.duckduckgo.com/html";
-    this.HEADERS = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    };
     this.rateLimiter = new RateLimiter();
   }
 
@@ -64,85 +84,72 @@ class DuckDuckGoSearcher {
     return output.join('\n');
   }
 
-  async search(query, ctx, maxResults = 10) {
-    try {
-      // Apply rate limiting
-      await this.rateLimiter.acquire();
+  async search(query, ctx, maxResults = 10, maxRetries = 5) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await this.rateLimiter.acquire();
 
-      // Create form data for POST request
-      const data = new URLSearchParams({
-        q: query,
-        b: "",
-        kl: ""
-      });
+        const data = new URLSearchParams({ q: query, b: "", kl: "" });
+        await ctx.info(`Searching DuckDuckGo for: ${query} (Attempt ${i + 1})`);
 
-      await ctx.info(`Searching DuckDuckGo for: ${query}`);
-
-      const response = await axios.post(
-        this.BASE_URL, 
-        data.toString(),
-        { 
+        const response = await axios.post(this.BASE_URL, data.toString(), {
           headers: {
-            ...this.HEADERS,
+            "User-Agent": USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
             'Content-Type': 'application/x-www-form-urlencoded'
           },
           timeout: 30000
-        }
-      );
+        });
 
-      // Parse HTML response
-      const $ = cheerio.load(response.data);
-      if (!$) {
-        await ctx.error("Failed to parse HTML response");
-        return [];
-      }
-
-      const results = [];
-      $('.result').each((i, element) => {
-        if (results.length >= maxResults) return false;
-        
-        const titleElem = $(element).find('.result__title');
-        if (!titleElem.length) return true;
-
-        const linkElem = titleElem.find('a');
-        if (!linkElem.length) return true;
-
-        const title = linkElem.text().trim();
-        let link = linkElem.attr('href');
-
-        // Skip ad results
-        if (link && link.includes('y.js')) return true;
-
-        // Clean up DuckDuckGo redirect URLs
-        if (link && link.startsWith('//duckduckgo.com/l/?uddg=')) {
-          link = decodeURIComponent(link.split('uddg=')[1].split('&')[0]);
+        const $ = cheerio.load(response.data);
+        if (!$) {
+          await ctx.error("Failed to parse HTML response");
+          continue; // Retry
         }
 
-        const snippetElem = $(element).find('.result__snippet');
-        const snippet = snippetElem.length ? snippetElem.text().trim() : "";
+        const results = [];
+        $('.result').each((idx, element) => {
+          if (results.length >= maxResults) return false;
 
-        results.push(new SearchResult(
-          title,
-          link,
-          snippet,
-          results.length + 1
-        ));
-      });
+          const titleElem = $(element).find('.result__title a');
+          const snippetElem = $(element).find('.result__snippet');
+          if (!titleElem.length) return true;
 
-      await ctx.info(`Successfully found ${results.length} results`);
-      return results;
+          const title = titleElem.text().trim();
+          let link = titleElem.attr('href');
+          
+          if (link && link.includes('y.js')) return true;
 
-    } catch (error) {
-      if (error.code === 'ECONNABORTED') {
-        await ctx.error("Search request timed out");
-      } else if (error.response) {
-        await ctx.error(`HTTP error occurred: ${error.message}`);
-      } else {
-        await ctx.error(`Unexpected error during search: ${error.message}`);
-        console.error(error);
+          if (link && link.startsWith('//duckduckgo.com/l/?uddg=')) {
+            link = decodeURIComponent(link.split('uddg=')[1].split('&')[0]);
+          }
+
+          const snippet = snippetElem.length ? snippetElem.text().trim() : "";
+
+          results.push(new SearchResult(title, link, snippet, results.length + 1));
+        });
+
+        if (results.length > 0) {
+          await ctx.info(`Successfully found ${results.length} results on attempt ${i + 1}`);
+          return results;
+        }
+
+        await ctx.info(`Attempt ${i + 1} returned no results, retrying...`);
+
+      } catch (error) {
+        if (error.code === 'ECONNABORTED') {
+          await ctx.error(`Search request timed out on attempt ${i + 1}`);
+        } else if (error.response) {
+          await ctx.error(`HTTP error on attempt ${i + 1}: ${error.message}`);
+        } else {
+          await ctx.error(`Unexpected error on attempt ${i + 1}: ${error.message}`);
+        }
+        if (i === maxRetries - 1) {
+          await ctx.error("Max retries reached. Search failed.");
+          return [];
+        }
       }
-      return [];
     }
+    return [];
   }
 }
 
@@ -151,52 +158,50 @@ class WebContentFetcher {
     this.rateLimiter = new RateLimiter(20);
   }
 
-  async fetchAndParse(url, ctx) {
-    try {
-      await this.rateLimiter.acquire();
+  async fetchAndParse(url, ctx, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await this.rateLimiter.acquire();
+        await ctx.info(`Fetching content from: ${url} (Attempt ${i + 1})`);
 
-      await ctx.info(`Fetching content from: ${url}`);
+        const response = await axios.get(url, {
+          headers: {
+            "User-Agent": USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+          },
+          maxRedirects: 5,
+          timeout: 30000
+        });
 
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        },
-        maxRedirects: 5,
-        timeout: 30000
-      });
+        const $ = cheerio.load(response.data);
+        $('script, style, nav, header, footer').remove();
+        let text = $('body').text().replace(/\s+/g, ' ').trim();
 
-      // Parse the HTML
-      const $ = cheerio.load(response.data);
+        if (text) {
+          if (text.length > 8000) {
+            text = text.substring(0, 8000) + "... [content truncated]";
+          }
+          await ctx.info(`Successfully fetched content on attempt ${i + 1} (${text.length} chars)`);
+          return text;
+        }
+        
+        await ctx.info(`Attempt ${i + 1} returned no content, retrying...`);
 
-      // Remove script and style elements
-      $('script, style, nav, header, footer').remove();
-
-      // Get the text content
-      let text = $('body').text();
-
-      // Clean up the text
-      text = text.replace(/\s+/g, ' ').trim();
-
-      // Truncate if too long
-      if (text.length > 8000) {
-        text = text.substring(0, 8000) + "... [content truncated]";
-      }
-
-      await ctx.info(`Successfully fetched and parsed content (${text.length} characters)`);
-      return text;
-
-    } catch (error) {
-      if (error.code === 'ECONNABORTED') {
-        await ctx.error(`Request timed out for URL: ${url}`);
-        return "Error: The request timed out while trying to fetch the webpage.";
-      } else if (error.response) {
-        await ctx.error(`HTTP error occurred while fetching ${url}: ${error.message}`);
-        return `Error: Could not access the webpage (${error.message})`;
-      } else {
-        await ctx.error(`Error fetching content from ${url}: ${error.message}`);
-        return `Error: An unexpected error occurred while fetching the webpage (${error.message})`;
+      } catch (error) {
+        if (error.code === 'ECONNABORTED') {
+          await ctx.error(`Request timed out for ${url} on attempt ${i + 1}`);
+        } else if (error.response) {
+          await ctx.error(`HTTP error for ${url} on attempt ${i + 1}: ${error.message}`);
+        } else {
+          await ctx.error(`Error fetching ${url} on attempt ${i + 1}: ${error.message}`);
+        }
+        if (i === maxRetries - 1) {
+          const finalError = `Error: Failed to fetch content after ${maxRetries} attempts.`;
+          await ctx.error(finalError);
+          return finalError;
+        }
       }
     }
+    return `Error: Failed to fetch content from ${url} after multiple retries.`;
   }
 }
 
